@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # AEGIS — Adaptive Evolving Guard & Immune System
 
 > Autonomous multi-cloud security defense that evolves faster than attackers can adapt.
@@ -149,3 +150,6 @@ python -m aegis.detection.pipeline --mode local
 ## License
 
 Apache License 2.0 — see [LICENSE](./LICENSE).
+=======
+# Sentix_Aegis
+>>>>>>> 717505477a9fb3143fcf12e64476c675833b8897
