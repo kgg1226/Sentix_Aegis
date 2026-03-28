@@ -59,12 +59,15 @@ class ResponsePolicy:
 class GenomeConfig:
     """Genome engine parameters."""
 
-    # Fitness function weights (battle-tuned: 5x 1000-battle campaigns)
-    w_coverage: float = 0.3523
-    w_efficiency: float = 0.3523
-    w_adaptability: float = 0.0120
-    w_synergy: float = 0.2714
-    w_threat_match: float = 0.0120
+    # Fitness function weights (rebalanced: adaptability + threat_match restored)
+    # Coverage/efficiency = core defense, synergy = pair bonus,
+    # adaptability = segment diversity (prevents dump-all-into-one),
+    # threat_match = context alignment (right defense for right threat)
+    w_coverage: float = 0.28
+    w_efficiency: float = 0.25
+    w_adaptability: float = 0.12
+    w_synergy: float = 0.23
+    w_threat_match: float = 0.12
 
     # Homeostasis (damping raised: battle-tuned for faster recovery)
     damping_base: float = 0.45

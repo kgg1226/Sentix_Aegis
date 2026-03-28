@@ -2,16 +2,17 @@
 
 The arena orchestrates attack-defense cycles:
   1. Red generates an attack targeting genome weaknesses
-  2. Attack success is determined by segment density vs effective threshold
+  2. Breach model evaluates success per attack category
   3. Blue evolves the genome in response
   4. Red learns from outcome for next round
 
-Breach mechanic:
-  breach when density < threshold * intensity
-  - threshold: base difficulty (0.3 -> 0.5 over campaign)
-  - intensity: Red's attack power (1.0x -> 2.5x as Red adapts)
-  This means a fortified 70% segment CAN be breached by a 2.0x intensity attack
-  when threshold is 0.40 (effective = 0.80 > 0.70 = breach).
+Breach models (category-specific):
+  COMMODITY:   density check -- basic defense blocks basic attacks
+  VOLUME:      fatigue model -- sustained pressure degrades defense
+  APT:         penetration model -- slow cumulative progress
+  ZERO_DAY:    probabilistic -- can breach even strong defense
+  INSIDER:     auth bypass -- ATH effectiveness halved
+  META_ATTACK: pipeline target -- attacks detection itself
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 
 from aegis.common.types import Genome, ThreatContext
 from aegis.sandbox.battle_log import BattleLog
+from aegis.sandbox.breach_model import evaluate_breach
 from aegis.sandbox.red_agent import AttackScenario, RedAgent
 from aegis.sandbox.blue_agent import BlueAgent
 
@@ -60,30 +62,47 @@ class Arena:
         self._round += 1
         attack = self._red.generate_attack(genome)
 
-        # Effective threshold = base * intensity
-        # A 2.0x intensity attack against 0.40 threshold -> effective 0.80
-        # If segment density < 0.80 -> breach
-        effective_threshold = min(
-            0.95,  # Hard cap: even max intensity can't breach >95%
-            self._breach_threshold * getattr(attack, "intensity", 1.0),
+        # Category-specific breach evaluation
+        breach_result = evaluate_breach(
+            genome=genome,
+            target_segment=attack.target_segment,
+            category=attack.category,
+            intensity=getattr(attack, "intensity", 1.0),
+            base_threshold=self._breach_threshold,
+            multi_targets=attack.multi_targets,
+            rng=self._red._rng,
+            erosion_pressure=self._red._erosion_pressure.get(
+                attack.target_segment, 0.0
+            ),
         )
-
-        # Determine breach: check all targets for multi-target attacks
-        if attack.multi_targets:
-            red_won = any(
-                genome.density(seg) < effective_threshold
-                for seg in attack.multi_targets
-            )
-        else:
-            red_won = genome.density(attack.target_segment) < effective_threshold
+        red_won = breach_result.breached
 
         # Red learns from outcome
         self._red.record_outcome(attack, red_won)
 
-        # Blue responds (pass attack details for learning)
+        # Blue successful defense partially decays Red's erosion
+        # Models real-world: key rotation, topology change, honeypot redeployment
+        # Decay is less than erosion gain (0.06/fail) -- attacker has initiative
+        # But Blue also gets a small "learning" decay on ALL segments (global vigilance)
+        if not red_won:
+            seg = attack.target_segment
+            decay = 0.05  # Active defense: patching, rotating, honeypot redeployment
+            self._red._erosion_pressure[seg] = max(
+                0.0, self._red._erosion_pressure.get(seg, 0.0) - decay
+            )
+            # Global vigilance: Blue's successful defense improves overall posture
+            for other_seg in ["RTG", "ISO", "ATH", "DTX", "DCP", "RSP"]:
+                if other_seg != seg:
+                    self._red._erosion_pressure[other_seg] = max(
+                        0.0, self._red._erosion_pressure.get(other_seg, 0.0) - 0.01
+                    )
+
+        # Blue responds (pass attack details + Red intel for learning)
         evolved = self._blue.respond(
             genome, ctx, red_won,
             attacked_segment=attack.target_segment,
+            red_strategy=attack.strategy,
+            attack_category=attack.category.name,
         )
 
         from aegis.genome.fitness import evaluate
