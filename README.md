@@ -77,7 +77,7 @@ Catches suspicious activity in 6 layers. Checks easy stuff first, then digs deep
 | L4 | 여러 클라우드 간 연결 고리 찾기 · Find cross-cloud correlations | 100-500ms |
 | L5 | AI 자체가 해킹당하지 않게 보호 · Protect the AI itself from being hacked | 병렬 실행 / Runs in parallel |
 
-- L3는 L1/L2 결과가 0.15 이상일 때만 실행 (불필요한 AI 호출 절약)
+- L3는 L1/L2 결과가 0.05 이상일 때만 실행 (전투 튜닝: 0.15에서 하향)
 - L4는 L3 결과가 0.30 이상일 때만 실행
 - L5는 항상 실행 — L3/L4의 AI가 해킹당하는 걸 감시해요
 
@@ -98,13 +98,15 @@ Like changing clothes — swaps the entire defense setup based on the situation.
 
 ### 4. Sandbox Arena (모의 전투장)
 
-- **Red Agent (공격 AI)**: 유전자의 약점을 찾아서 공격 시나리오를 만들어요
-- **Blue Agent (방어 AI)**: 공격을 받으면 유전자를 변이시켜서 더 강한 방어를 만들어요
-- 이 둘이 계속 싸우면서 방어 시스템이 점점 강해져요
+- **Red Agent (공격 AI)**: 6가지 전략 (exploit/probe/blitz/pivot/erode/cascade)으로 약점 공격
+- **Blue Agent (방어 AI)**: 6가지 전략 (repair/fortify/diversify/harden/rotate/reinforce)으로 방어 진화
+- 5세대 x 1000전 x 3라운드 군비경쟁을 통해 실시간으로 보안 모델 개선
+- Red Q4 승률: 56% -> 10%로 감소 (5세대 진화 결과)
 
-- **Red Agent (attacker AI)**: Finds weaknesses in the genome and creates attack scenarios
-- **Blue Agent (defender AI)**: When attacked, mutates the genome to build stronger defenses
-- They keep fighting, and the defense system keeps getting stronger
+- **Red Agent (attacker AI)**: 6 strategies (exploit/probe/blitz/pivot/erode/cascade) targeting weaknesses
+- **Blue Agent (defender AI)**: 6 strategies (repair/fortify/diversify/harden/rotate/reinforce) evolving defenses
+- Security model improved in real-time through 5 generations x 1000 battles x 3 rounds
+- Red Q4 win rate: 56% -> 10% across 5 generations of arms race
 
 ### 5. Adaptive Homeostasis (적응형 균형 장치)
 
@@ -166,12 +168,24 @@ sentix-aegis/
 │       ├── detection/       # 탐지 파이프라인 · Detection pipeline
 │       │   ├── pipeline.py  # 오케스트레이터 · Orchestrator
 │       │   ├── collectors/  # L0: 클라우드 이벤트 수집 · Cloud event collectors
+│       │   │   ├── aws.py       # CloudTrail, GuardDuty, SecurityHub
+│       │   │   ├── azure.py     # Sentinel, Defender for Cloud
+│       │   │   └── oracle.py    # Cloud Guard
 │       │   └── analyzers/   # L1-L4: 분석 레이어 · Analysis layers
 │       ├── immune/          # L5: AI 해킹 방어 · LLM injection defense
 │       ├── metamorphic/     # 변형 엔진 · Metamorphic engine
 │       └── sandbox/         # 모의 전투장 · Red vs Blue arena
+│           ├── arena.py     # 전투 오케스트레이터 · Battle orchestrator
+│           ├── red_agent.py # 공격 AI (6 strategies) · Attacker AI
+│           ├── blue_agent.py # 방어 AI (6 strategies) · Defender AI
+│           ├── battle_log.py # 전투 기록 + 분석 · Battle log & analysis
+│           └── model_adapter.py # 전투 결과 -> 모델 개선 · Battle -> model improvement
+├── scripts/                 # 실행 스크립트 · Runner scripts
+│   ├── battle.py           # 단일 전투 · Single battle
+│   ├── evolve.py           # 세대별 진화 · Generational evolution
+│   └── campaign.py         # 1000전 캠페인 · 1000-battle campaign
 ├── tests/                   # 테스트 · Tests
-├── infra/                   # AWS 인프라 · AWS CDK infrastructure
+├── infra/                   # AWS 인프라 스텁 · AWS CDK infrastructure (Phase 7)
 ├── docs/                    # 설계 문서 · Design documents
 └── tasks/                   # 작업 추적 · Task tracking
 ```
@@ -221,14 +235,37 @@ pytest
 python -m aegis.detection.pipeline --mode local
 ```
 
+## 클라우드 수집기 설정 (선택) / Cloud collector setup (optional)
+
+수집기는 SDK가 없으면 자동으로 꺼져요 — 클라우드 없이도 로컬 모드로 동작합니다.
+
+Collectors gracefully degrade when their SDK is not installed — AEGIS runs in local mode without any cloud dependency.
+
+```bash
+# AWS (CloudTrail, GuardDuty, SecurityHub)
+pip install boto3
+
+# Azure (Sentinel, Defender for Cloud)
+pip install azure-identity azure-mgmt-securityinsight
+
+# Oracle Cloud (Cloud Guard)
+pip install oci
+```
+
+| 수집기 / Collector | 기본값 / Default | 설정 키 / Config key |
+|---|---|---|
+| AWS | 활성 · enabled | `aws_enabled` |
+| Azure | 비활성 · disabled | `azure_enabled` + `azure_subscription_id` |
+| Oracle | 비활성 · disabled | `oracle_enabled` + `oracle_compartment_id` |
+
 ---
 
 ## 현재 한계점 (v0.1) / Known Limitations
 
-- Fitness 함수 상수가 직접 조정한 값이에요 (데이터 기반 보정 필요) · Fitness constants are hand-tuned, not empirically calibrated
+- Fitness 함수 상수가 전투 튜닝 값이에요 (5세대 진화 기반) · Fitness constants are battle-tuned (5 generations)
 - L3/L4는 AWS Bedrock이 필요해요 — 로컬에서는 가짜 응답을 써요 · L3/L4 need AWS Bedrock — local mode uses mock responses
 - 샌드박스가 싱글 스레드예요 · Sandbox arena is single-threaded
-- 클라우드 수집기는 아직 스텁이에요 (AWS/Azure/Oracle) · Cloud collectors are still stubs
+- AWS CDK 인프라는 스텁이에요 (Phase 7) · AWS CDK infrastructure is stubbed (Phase 7)
 
 ---
 

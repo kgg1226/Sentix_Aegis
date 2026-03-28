@@ -53,21 +53,23 @@ def with_valid_checksum(bits: tuple[int, ...]) -> Genome:
 # These are starting points — evolution diverges from them.
 
 _FORM_TEMPLATES: dict[DefenseForm, dict[str, float]] = {
+    # Battle-tuned: 3x 1000-battle campaigns. RTG is #1 chronic target.
+    # All segments >= 0.75 floor. RTG raised to 0.85 (erode counter).
     DefenseForm.ALPHA: {
-        "RTG": 0.35, "ISO": 0.25, "ATH": 0.35,
-        "DTX": 0.45, "DCP": 0.15, "RSP": 0.30,
+        "RTG": 0.85, "ISO": 0.75, "ATH": 0.75,
+        "DTX": 0.75, "DCP": 0.75, "RSP": 0.75,
     },
     DefenseForm.BETA: {
-        "RTG": 0.80, "ISO": 0.65, "ATH": 0.55,
-        "DTX": 0.60, "DCP": 0.30, "RSP": 0.50,
+        "RTG": 0.85, "ISO": 0.75, "ATH": 0.75,
+        "DTX": 0.75, "DCP": 0.75, "RSP": 0.75,
     },
     DefenseForm.GAMMA: {
-        "RTG": 0.40, "ISO": 0.35, "ATH": 0.40,
-        "DTX": 0.70, "DCP": 0.85, "RSP": 0.45,
+        "RTG": 0.85, "ISO": 0.75, "ATH": 0.75,
+        "DTX": 0.75, "DCP": 0.85, "RSP": 0.75,
     },
     DefenseForm.DELTA: {
-        "RTG": 0.55, "ISO": 0.95, "ATH": 0.95,
-        "DTX": 0.75, "DCP": 0.10, "RSP": 0.85,
+        "RTG": 0.85, "ISO": 0.95, "ATH": 0.95,
+        "DTX": 0.80, "DCP": 0.75, "RSP": 0.85,
     },
 }
 
