@@ -34,13 +34,20 @@
 - [x] Blue-green form transition with rollback
 
 ## Phase 5: Sandbox arena — COMPLETE
-- [x] Red agent (6 strategies: exploit/probe/blitz/pivot/erode/cascade)
-- [x] Blue agent (6 strategies: repair/fortify/diversify/harden/rotate/reinforce)
+- [x] Red agent (8 strategies: exploit/probe/blitz/pivot/erode/cascade/fury/feint)
+- [x] Blue agent (9 strategies: repair/fortify/diversify/harden/rotate/reinforce/synergize/counter-intel/lockdown)
 - [x] Battle loop orchestrator with intensity-aware breach mechanic
 - [x] Memory bank (in-memory implementation)
 - [x] Battle log + vulnerability analysis
 - [x] Model adapter (battle analysis -> config patch)
-- [x] 5x 1000-battle arms race campaign (Red Q4: 56% -> 10%)
+- [x] 5x 1000-battle arms race campaign
+- [x] Category-specific breach model (COMMODITY/VOLUME/APT/ZERO_DAY/INSIDER/META_ATTACK)
+- [x] Segment synergy defense system (5 pairs: DTX+RSP, ISO+ATH, DCP+DTX, RTG+ISO, ATH+RSP)
+- [x] Red intelligence dossier (segment×category success tracking, grudge system, kill streak)
+- [x] Blue counter-intelligence (attack prediction, pattern analysis, emergency lockdown)
+- [x] Intensity diminishing returns + erosion cap (balanced adversarial dynamics)
+- [x] Fitness weight rebalancing (adaptability 1.2%→12%, threat_match 1.2%→12%)
+- [x] Verified: 2x 1000-battle campaigns (50:50 ~ 59:41 Red, Red escalates over time)
 
 ## Phase 6: Cloud collectors (L0 implementation) — COMPLETE
 - [x] AWS collector (CloudTrail, GuardDuty, SecurityHub)
