@@ -1,20 +1,29 @@
 """Breach determination model -- per-category attack success logic.
 
-Replaces the naive `density < threshold` with category-specific models
-that reflect how real attacks succeed or fail.
-
-Each category has a different success condition:
-  COMMODITY:   density check -- basic attacks blocked by basic defense
+Each category has a fundamentally different breach mechanic:
+  COMMODITY:   density check -- basic attacks blocked by solid defense
   VOLUME:      fatigue model -- sustained pressure degrades defense over time
   APT:         penetration model -- slow cumulative progress, breach at threshold
-  ZERO_DAY:    probabilistic -- can breach even strong defense, DTX reduces odds
+  ZERO_DAY:    probabilistic -- can breach even strong defense (the wildcard)
   INSIDER:     auth bypass -- ATH effectiveness halved (authorized user)
-  META_ATTACK: pipeline target -- attacks detection itself, L5-dependent
+  META_ATTACK: pipeline target -- attacks detection itself, synergy-dependent
 
-Additionally, segment synergy provides a defense bonus:
-  - DTX+RSP pair: detection-response coordination
-  - ISO+ATH pair: isolation-authentication layering
-  - DCP+DTX pair: deception-detection amplification
+Key design principle: HIGH DENSITY SHOULD MEAN SOMETHING.
+  - At 85%+ density, COMMODITY/VOLUME should almost never breach
+  - APT can breach high density, but ONLY with sustained erosion
+  - ZERO_DAY is the only pure probability path through high defense
+  - INSIDER bypasses ATH but still faces other defenses
+  - META_ATTACK is rare but devastating when it lands
+
+Intensity scales attack power but has diminishing returns above 2.0x.
+This prevents mathematical impossibility of defense.
+
+Segment synergy provides defense bonus:
+  - DTX+RSP: detection-response coordination
+  - ISO+ATH: isolation-authentication layering
+  - DCP+DTX: deception-detection amplification
+  - RTG+ISO: network segmentation
+  - ATH+RSP: rapid lockout
 """
 
 from __future__ import annotations
@@ -33,36 +42,43 @@ class BreachResult:
     breached: bool
     category: ThreatCategory
     target_segment: str
-    effective_defense: float    # Final defense score after all modifiers
-    attack_power: float         # Final attack power after all modifiers
-    synergy_bonus: float        # Defense bonus from segment synergy
-    reason: str                 # Human-readable explanation
+    effective_defense: float
+    attack_power: float
+    synergy_bonus: float
+    reason: str
 
 
-# Segment synergy pairs: (seg_a, seg_b) -> bonus_weight
-# When both segments are strong, they amplify each other's defense
+# Segment synergy pairs
 _SYNERGY_PAIRS: list[tuple[str, str, float]] = [
-    ("DTX", "RSP", 0.08),   # Detection + Response = coordinated defense
-    ("ISO", "ATH", 0.06),   # Isolation + Auth = layered access control
-    ("DCP", "DTX", 0.05),   # Deception + Detection = attacker confusion
-    ("RTG", "ISO", 0.04),   # Routing + Isolation = network segmentation
-    ("ATH", "RSP", 0.03),   # Auth + Response = rapid lockout
+    ("DTX", "RSP", 0.08),
+    ("ISO", "ATH", 0.06),
+    ("DCP", "DTX", 0.05),
+    ("RTG", "ISO", 0.04),
+    ("ATH", "RSP", 0.03),
 ]
 
 
 def compute_synergy_bonus(genome: Genome) -> float:
-    """Compute defense bonus from segment pair synergies.
-
-    Returns a value in [0.0, ~0.20] that reduces breach probability.
-    Both segments must be strong for the bonus to matter.
-    """
+    """Defense bonus from segment pair synergies. Range [0.0, ~0.20]."""
     bonus = 0.0
     for seg_a, seg_b, weight in _SYNERGY_PAIRS:
-        # Synergy = geometric mean of both densities * weight
-        # Both need to be strong; one weak segment kills the pair
         pair_strength = math.sqrt(genome.density(seg_a) * genome.density(seg_b))
         bonus += pair_strength * weight
     return bonus
+
+
+def _effective_intensity(raw_intensity: float) -> float:
+    """Apply diminishing returns to attack intensity.
+
+    Raw intensity can grow to 3.5x, but effective intensity caps at ~2.0x.
+    This prevents defense from being mathematically impossible.
+
+    Formula: eff = 1.0 + ln(raw_intensity) * 0.8
+    At raw=1.0 → eff=1.0, raw=2.0 → eff=1.55, raw=3.5 → eff=2.0
+    """
+    if raw_intensity <= 1.0:
+        return raw_intensity
+    return 1.0 + math.log(raw_intensity) * 0.8
 
 
 def evaluate_breach(
@@ -76,23 +92,12 @@ def evaluate_breach(
     rng: random.Random | None = None,
     erosion_pressure: float = 0.0,
 ) -> BreachResult:
-    """Determine if an attack breaches the defense.
-
-    Args:
-        genome: Current defense genome
-        target_segment: Primary attack target
-        category: Type of attack (determines breach model)
-        intensity: Red agent's attack power multiplier
-        base_threshold: Campaign's current breach threshold
-        multi_targets: Additional targets for blitz/cascade attacks
-        rng: Random number generator for probabilistic models
-        erosion_pressure: Accumulated pressure on target segment (erode attacks)
-    """
+    """Determine if an attack breaches the defense."""
     rng = rng or random.Random()
     targets = multi_targets if multi_targets else (target_segment,)
     synergy = compute_synergy_bonus(genome)
+    eff_intensity = _effective_intensity(intensity)
 
-    # Dispatch to category-specific model
     dispatch = {
         ThreatCategory.COMMODITY: _breach_commodity,
         ThreatCategory.VOLUME: _breach_volume,
@@ -103,12 +108,11 @@ def evaluate_breach(
     }
     model = dispatch.get(category, _breach_commodity)
 
-    # Check each target -- any breach = Red wins
     for seg in targets:
         result = model(
             genome=genome,
             segment=seg,
-            intensity=intensity,
+            intensity=eff_intensity,
             base_threshold=base_threshold,
             synergy_bonus=synergy,
             rng=rng,
@@ -117,14 +121,13 @@ def evaluate_breach(
         if result.breached:
             return result
 
-    # All targets held
     density = genome.density(target_segment)
     return BreachResult(
         breached=False,
         category=category,
         target_segment=target_segment,
         effective_defense=density + synergy,
-        attack_power=intensity * base_threshold,
+        attack_power=eff_intensity * base_threshold,
         synergy_bonus=synergy,
         reason=f"{target_segment} held: defense {density:.2f} + synergy {synergy:.2f}",
     )
@@ -143,14 +146,17 @@ def _breach_commodity(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """COMMODITY: Simple density check with synergy defense.
+    """COMMODITY: density check. High density = near-impenetrable.
 
-    Script-kiddie attacks. Blocked by basic density.
-    Intensity matters but synergy provides a clear counter.
+    Script-kiddie attacks. At 80%+ density with synergy, these should
+    almost always fail. Red needs to use smarter categories.
     """
     density = genome.density(segment)
-    defense = density + synergy_bonus * 0.5  # Synergy helps moderately
-    attack = base_threshold * intensity * 0.8  # Commodity attacks are weak
+    defense = density + synergy_bonus * 0.5
+
+    # Commodity attack power: low ceiling
+    attack = base_threshold * intensity * 0.65
+    attack = min(attack, 0.70)  # Hard cap: commodity can't breach 70%+ defense
 
     breached = defense < attack
     return BreachResult(
@@ -174,24 +180,25 @@ def _breach_volume(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """VOLUME: Fatigue model -- sustained pressure wears down defense.
+    """VOLUME: fatigue model. Erosion is the real weapon here.
 
-    DDoS, credential stuffing. Each round of pressure accumulates.
-    RTG (routing) and RSP (response) are key defenders.
-    Erosion pressure directly degrades effective defense.
+    DDoS / credential stuffing. Base attacks are weak, but sustained
+    erosion pressure degrades defense. RTG absorbs, RSP counters.
+    This is the SLOW GRIND — powerful when Red is patient.
     """
     density = genome.density(segment)
-    # RTG helps absorb volume (routing can redistribute load)
     rtg_absorb = genome.density("RTG") * 0.10
-    # RSP helps with automated response to volume
     rsp_counter = genome.density("RSP") * 0.08
 
     defense = density + synergy_bonus * 0.3 + rtg_absorb + rsp_counter
-    # Erosion directly weakens: sustained volume degrades defense
-    defense -= erosion_pressure * 0.3
+    # Erosion degrades defense (the key mechanic for VOLUME)
+    erosion_damage = erosion_pressure * 0.25
+    defense -= erosion_damage
     defense = max(0.0, defense)
 
-    attack = base_threshold * intensity * 0.9
+    # Volume attack power: moderate, capped
+    attack = base_threshold * intensity * 0.75
+    attack = min(attack, 0.85)  # Can breach moderate defense with erosion
 
     breached = defense < attack
     return BreachResult(
@@ -216,28 +223,38 @@ def _breach_apt(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """APT: Penetration model -- slow cumulative progress.
+    """APT: penetration model. Erosion + probabilistic breakthrough.
 
-    Advanced persistent threats are patient. They probe, map, then strike.
-    High erosion_pressure = they've been at this for a while.
-    DCP (deception) is the primary counter -- confuses APT reconnaissance.
-    DTX (detection) catches slow lateral movement.
+    Advanced persistent threats are patient and methodical.
+    High erosion = they've mapped the network. DCP confuses them.
+    DTX catches slow movement. But even good defense can fall to
+    a well-planned APT with enough accumulated intelligence.
     """
     density = genome.density(segment)
-    # DCP is critical against APT -- honeypots waste attacker time
-    dcp_counter = genome.density("DCP") * 0.15
-    # DTX catches slow movement
-    dtx_counter = genome.density("DTX") * 0.10
+    dcp_counter = genome.density("DCP") * 0.12
+    dtx_counter = genome.density("DTX") * 0.08
 
-    defense = density + synergy_bonus * 0.5 + dcp_counter + dtx_counter
-    # APT accumulates progress -- erosion is their primary weapon
-    penetration = erosion_pressure * 0.5 + intensity * 0.1
+    defense = density + synergy_bonus * 0.4 + dcp_counter + dtx_counter
+    # APT accumulates penetration progress
+    penetration = erosion_pressure * 0.40
     defense -= penetration
     defense = max(0.0, defense)
 
-    attack = base_threshold * intensity * 0.7  # Lower base but erosion-amplified
+    # APT base attack: moderate but enhanced by penetration
+    attack = base_threshold * intensity * 0.60
+    # APT gets bonus from high erosion (intelligence gathering pays off)
+    if erosion_pressure > 0.3:
+        apt_intel_bonus = min(0.15, (erosion_pressure - 0.3) * 0.3)
+        attack += apt_intel_bonus
 
-    breached = defense < attack
+    attack = min(attack, 0.90)  # Can breach strong defense with enough prep
+
+    # Probabilistic element: even without erosion, APT can get lucky
+    lucky_roll = rng.random()
+    apt_luck_prob = 0.03 + erosion_pressure * 0.08  # 3% base, scales with erosion
+    apt_luck_prob = min(0.20, apt_luck_prob)
+
+    breached = defense < attack or lucky_roll < apt_luck_prob
     return BreachResult(
         breached=breached,
         category=ThreatCategory.APT,
@@ -247,7 +264,7 @@ def _breach_apt(
         synergy_bonus=synergy_bonus,
         reason=f"APT: {'breached' if breached else 'blocked'} "
                f"(defense {defense:.2f} vs attack {attack:.2f}, "
-               f"penetration={penetration:.2f})",
+               f"penetration={penetration:.2f}, luck_prob={apt_luck_prob:.2f})",
     )
 
 
@@ -260,28 +277,30 @@ def _breach_zeroday(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """ZERO_DAY: Probabilistic -- can breach even high density.
+    """ZERO_DAY: probabilistic. The WILDCARD.
 
-    Unknown vulnerabilities bypass pattern-based defense.
-    DTX density reduces probability but can't eliminate it.
-    Even 95% density has a chance of being breached.
-    This is the only model where "defense > attack" can still lose.
+    Unknown vulnerabilities bypass pattern-based defense entirely.
+    DTX (behavioral detection) is the primary counter — it catches
+    anomalies regardless of signatures. Even 95% density has a chance.
+
+    This is Red's most reliable path through high defense, but it's
+    inherently random — Red can't control when it works.
     """
     density = genome.density(segment)
     dtx = genome.density("DTX")
 
-    # Base breach probability: higher intensity = higher chance
-    # DTX (detection sensors) is the primary counter
-    base_prob = 0.05 + intensity * 0.08  # 5% base + intensity scaling
+    # Base breach probability scales with intensity
+    base_prob = 0.08 + intensity * 0.06
     # DTX reduces probability (behavioral detection catches anomalies)
-    dtx_reduction = dtx * 0.15
-    # Synergy further reduces
-    synergy_reduction = synergy_bonus * 0.3
+    dtx_reduction = dtx * 0.12
+    # Synergy reduces further
+    synergy_reduction = synergy_bonus * 0.25
+    # High density provides some resistance
+    density_resistance = density * 0.05
 
-    breach_prob = max(0.02, base_prob - dtx_reduction - synergy_reduction)
-    breach_prob = min(0.60, breach_prob)  # Cap at 60%
+    breach_prob = max(0.03, base_prob - dtx_reduction - synergy_reduction - density_resistance)
+    breach_prob = min(0.45, breach_prob)  # Cap at 45%
 
-    # Roll the dice
     roll = rng.random()
     breached = roll < breach_prob
 
@@ -306,29 +325,37 @@ def _breach_insider(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """INSIDER: Auth bypass -- ATH effectiveness halved.
+    """INSIDER: auth bypass. The TRAITOR.
 
-    Authorized users already passed authentication.
-    ATH segment's defense is cut in half against insiders.
-    ISO (isolation) becomes the primary counter -- limits blast radius.
-    DCP (deception) helps detect abnormal authorized behavior.
+    Authorized users already passed authentication. ATH is halved.
+    ISO limits blast radius. DCP catches abnormal authorized behavior.
+    This category is dangerous because it bypasses the outer defense
+    layer entirely.
     """
     density = genome.density(segment)
     ath = genome.density("ATH")
     iso = genome.density("ISO")
     dcp = genome.density("DCP")
 
-    # ATH is halved -- insider already has credentials
-    ath_contribution = ath * 0.05  # Normally ~0.10, halved
-    # ISO is critical -- limits what insider can reach
-    iso_counter = iso * 0.15
-    # DCP catches abnormal behavior from authorized users
-    dcp_counter = dcp * 0.10
+    # ATH halved — insider has credentials
+    ath_contribution = ath * 0.05
+    # ISO is critical — limits blast radius
+    iso_counter = iso * 0.13
+    # DCP catches abnormal behavior
+    dcp_counter = dcp * 0.08
 
-    defense = density + synergy_bonus * 0.4 + ath_contribution + iso_counter + dcp_counter
-    attack = base_threshold * intensity * 0.85
+    defense = density + synergy_bonus * 0.35 + ath_contribution + iso_counter + dcp_counter
 
-    breached = defense < attack
+    # Insider attack: fairly strong (they know the system)
+    attack = base_threshold * intensity * 0.70
+    attack = min(attack, 0.85)
+
+    # Probabilistic element: insider knowledge gives random advantage
+    insider_luck = rng.random()
+    insider_prob = 0.05 + intensity * 0.03
+    insider_prob = min(0.15, insider_prob)
+
+    breached = defense < attack or insider_luck < insider_prob
     return BreachResult(
         breached=breached,
         category=ThreatCategory.INSIDER,
@@ -351,23 +378,24 @@ def _breach_meta(
     rng: random.Random,
     erosion_pressure: float,
 ) -> BreachResult:
-    """META_ATTACK: Targets the detection pipeline itself.
+    """META_ATTACK: targets detection pipeline. The SABOTEUR.
 
     Attempts to compromise L3/L4 (LLM layers) via injection.
-    DTX is the primary defense (sensor integrity).
-    Synergy bonus is critical -- isolated sensors are vulnerable.
-    Probabilistic element: sophisticated meta-attacks can bypass.
+    DTX integrity is the main defense. Synergy is critical —
+    isolated sensors are vulnerable to meta-attacks.
+    Primarily probabilistic: sophisticated meta-attacks bypass
+    conventional defense measures.
     """
     density = genome.density(segment)
     dtx = genome.density("DTX")
 
-    # DTX integrity is the main defense
-    dtx_defense = dtx * 0.20
-    defense = density + synergy_bonus * 0.6 + dtx_defense
+    dtx_defense = dtx * 0.18
+    defense = density + synergy_bonus * 0.5 + dtx_defense
 
-    # Meta-attacks have probabilistic bypass
-    base_prob = 0.03 + intensity * 0.05
-    bypass_prob = max(0.01, base_prob - synergy_bonus * 0.4)
+    # Meta-attacks have probabilistic bypass (injection success)
+    base_prob = 0.04 + intensity * 0.04
+    bypass_prob = max(0.02, base_prob - synergy_bonus * 0.35)
+    bypass_prob = min(0.25, bypass_prob)
 
     roll = rng.random()
     if roll < bypass_prob:
@@ -382,7 +410,9 @@ def _breach_meta(
                    f"(bypass prob={bypass_prob:.2f}, roll={roll:.2f})",
         )
 
-    attack = base_threshold * intensity * 0.75
+    attack = base_threshold * intensity * 0.60
+    attack = min(attack, 0.80)
+
     breached = defense < attack
     return BreachResult(
         breached=breached,
