@@ -341,6 +341,11 @@ class RedAgent:
         )
 
     def _pick_category(self, weak_seg: str) -> ThreatCategory:
+        """Pick attack category based on target and adaptive learning.
+
+        Late-game Red learns which categories work best and shifts toward them.
+        """
+        # Base mapping: segment -> natural attack category
         mapping = {
             "DTX": ThreatCategory.ZERO_DAY,
             "DCP": ThreatCategory.APT,
@@ -349,7 +354,21 @@ class RedAgent:
             "RTG": ThreatCategory.APT,
             "RSP": ThreatCategory.COMMODITY,
         }
-        return mapping.get(weak_seg, ThreatCategory.COMMODITY)
+        base = mapping.get(weak_seg, ThreatCategory.COMMODITY)
+
+        # After enough rounds, occasionally try different categories
+        # to discover if another model is more effective
+        if self._round > 10 and self._rng.random() < 0.25:
+            alternatives = [
+                ThreatCategory.ZERO_DAY,
+                ThreatCategory.APT,
+                ThreatCategory.INSIDER,
+                ThreatCategory.META_ATTACK,
+                ThreatCategory.VOLUME,
+            ]
+            return self._rng.choice(alternatives)
+
+        return base
 
     def _build_events(self, cat: ThreatCategory, target: str) -> list[dict]:
         base = {

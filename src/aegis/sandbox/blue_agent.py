@@ -32,7 +32,21 @@ from aegis.genome.operators import burst_mutation, crossover, point_mutation
 DEFENSE_SEGMENTS = ["RTG", "ISO", "ATH", "DTX", "DCP", "RSP"]
 BASE_SAFETY_MARGIN = 0.40  # Target density above breach threshold (0.30)
 
-Strategy = Literal["repair", "fortify", "diversify", "harden", "rotate", "reinforce"]
+# Synergy pairs: strengthening BOTH segments gives disproportionate defense bonus
+# Against APT: DCP+DTX is critical (deception confuses reconnaissance)
+# Against ZERO_DAY: DTX is primary (behavioral detection catches anomalies)
+# Against VOLUME: RTG+RSP is critical (routing absorbs, response counters)
+# Against INSIDER: ISO+DCP is critical (isolation limits blast, deception detects)
+SYNERGY_PRIORITY = {
+    "DTX": ["RSP", "DCP"],   # Detection needs response and deception partners
+    "DCP": ["DTX", "ISO"],   # Deception needs detection and isolation
+    "RTG": ["ISO", "DCP"],   # Routing needs isolation and deception
+    "ISO": ["ATH", "RTG"],   # Isolation needs auth and routing
+    "ATH": ["RSP", "ISO"],   # Auth needs response and isolation
+    "RSP": ["DTX", "ATH"],   # Response needs detection and auth
+}
+
+Strategy = Literal["repair", "fortify", "diversify", "harden", "rotate", "reinforce", "synergize"]
 
 
 class BlueAgent:
@@ -100,6 +114,8 @@ class BlueAgent:
             result = self._strategy_rotate(genome, ctx, attacked_segment)
         elif strategy == "reinforce":
             result = self._strategy_reinforce(genome, ctx)
+        elif strategy == "synergize":
+            result = self._strategy_synergize(genome, ctx)
         else:
             result = self._strategy_harden(genome, ctx)
 
@@ -141,15 +157,18 @@ class BlueAgent:
 
         # Detect sustained pressure (erode pattern): same segment hit 3+ times in a row
         if attacked_seg and self._consecutive_attacks.get(attacked_seg, 0) >= 3:
-            # Alternate between rotate and reinforce to counter erode
+            # Alternate between rotate and synergize to counter erode
             if self._round % 2 == 0:
                 return "rotate"
-            return "reinforce"
+            return "synergize"
 
-        # High recent breach rate -> reinforce all segments
+        # High recent breach rate -> synergize (not just reinforce)
         recent_window = self._breach_history[-20:]
         if len(recent_window) >= 10 and sum(recent_window) / len(recent_window) > 0.3:
-            return "reinforce"
+            # Alternate: synergize builds pair defense, reinforce raises floor
+            if self._round % 3 == 0:
+                return "reinforce"
+            return "synergize"
 
         # Check if any segment is dangerously close to threshold
         vulnerable = self._find_vulnerable_segments(genome)
@@ -362,6 +381,59 @@ class BlueAgent:
             bits[idx] = 1
 
         return with_valid_checksum(tuple(bits))
+
+    def _strategy_synergize(self, genome: Genome, ctx: ThreatContext) -> Genome:
+        """Strengthen synergy pairs to boost the synergy defense bonus.
+
+        The breach model gives a defense bonus when BOTH segments in a pair
+        are strong. This strategy identifies the weakest synergy pair and
+        strengthens both members simultaneously.
+
+        Key insight: raising one segment from 60% to 80% is less effective
+        than raising BOTH segments of a pair from 70% to 80% each.
+        """
+        from aegis.sandbox.breach_model import compute_synergy_bonus, _SYNERGY_PAIRS
+        import math
+
+        best = genome
+        best_synergy = compute_synergy_bonus(genome)
+        best_fitness = evaluate(genome, ctx).final
+
+        # Find the weakest synergy pair
+        weakest_pair = None
+        weakest_strength = float("inf")
+        for seg_a, seg_b, weight in _SYNERGY_PAIRS:
+            pair_strength = math.sqrt(genome.density(seg_a) * genome.density(seg_b))
+            if pair_strength < weakest_strength:
+                weakest_strength = pair_strength
+                weakest_pair = (seg_a, seg_b)
+
+        for _ in range(self._max_mutations):
+            candidate = genome
+
+            # Strengthen both segments of the weakest pair
+            if weakest_pair:
+                candidate = self._targeted_strengthen(candidate, weakest_pair[0], n_bits=3)
+                candidate = self._targeted_strengthen(candidate, weakest_pair[1], n_bits=3)
+
+            # Also strengthen the most-attacked segment's synergy partners
+            most_attacked = self._most_attacked_segments(top_k=1)
+            if most_attacked:
+                partners = SYNERGY_PRIORITY.get(most_attacked[0], [])
+                for partner in partners[:2]:
+                    candidate = self._targeted_strengthen(candidate, partner, n_bits=2)
+
+            candidate = apply_homeostasis(candidate, ctx)
+            new_synergy = compute_synergy_bonus(candidate)
+            f = evaluate(candidate, ctx).final
+
+            # Prefer candidates that improve BOTH synergy AND fitness
+            if new_synergy > best_synergy or (new_synergy >= best_synergy and f > best_fitness):
+                best = candidate
+                best_synergy = new_synergy
+                best_fitness = f
+
+        return best
 
     def _enforce_density_floor(self, genome: Genome, ctx: ThreatContext) -> Genome:
         """Post-strategy safety net: raise any segment below dynamic floor.
