@@ -86,6 +86,57 @@ class Genome:
 
 
 # ---------------------------------------------------------------------------
+# Cloud events (L0 collector output)
+# ---------------------------------------------------------------------------
+
+
+class CloudProvider(Enum):
+    """Supported cloud providers."""
+
+    AWS = "aws"
+    AZURE = "azure"
+    ORACLE = "oracle"
+
+
+@dataclass(frozen=True, slots=True)
+class CloudEvent:
+    """Normalized security event from any cloud provider.
+
+    Collectors translate provider-specific formats into this common schema.
+    The detection pipeline operates exclusively on CloudEvent instances.
+    """
+
+    provider: CloudProvider
+    event_id: str               # Provider-native event ID
+    timestamp: str              # ISO 8601 UTC
+    region: str                 # Provider region (e.g. ap-northeast-2)
+    source_service: str         # e.g. cloudtrail, guardduty, sentinel
+    action: str                 # Normalized action name
+    identity: str               # Actor identity (ARN, UPN, OCID)
+    source_ip: str              # Source IP address
+    resource: str               # Target resource identifier
+    severity: float             # [0.0, 1.0] normalized severity
+    raw_event: dict             # Original provider payload (for L3/L4 deep analysis)
+    indicators: dict[str, str] = field(default_factory=dict)  # sha256, md5, domain, url, etc.
+
+    def to_pipeline_dict(self) -> dict:
+        """Convert to the dict format expected by the detection pipeline."""
+        return {
+            "cloud": self.provider.value,
+            "event_id": self.event_id,
+            "timestamp": self.timestamp,
+            "region": self.region,
+            "source_service": self.source_service,
+            "action": self.action,
+            "identity": self.identity,
+            "source_ip": self.source_ip,
+            "resource": self.resource,
+            "severity": self.severity,
+            **self.indicators,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
 

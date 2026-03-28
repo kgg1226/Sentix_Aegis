@@ -8,12 +8,15 @@ L5 (LLM immune) runs in parallel with L1-L4.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from typing import Protocol
 
-from aegis.common.config import AegisConfig, DetectionConfig
-from aegis.common.types import DetectionSignal, ThreatAssessment, ThreatCategory
+from aegis.common.config import AegisConfig, CollectorConfig, DetectionConfig
+from aegis.common.types import CloudEvent, DetectionSignal, ThreatAssessment, ThreatCategory
+
+logger = logging.getLogger(__name__)
 
 
 class Analyzer(Protocol):
@@ -172,3 +175,64 @@ class DetectionPipeline:
         if confidence >= cfg.enhanced_monitor_min:
             return "enhanced_monitor"
         return "monitor"
+
+
+class CollectorOrchestrator:
+    """Runs all enabled cloud collectors and feeds events into the pipeline.
+
+    Usage:
+        orchestrator = CollectorOrchestrator(pipeline, config)
+        assessments = await orchestrator.collect_and_process()
+    """
+
+    def __init__(
+        self,
+        pipeline: DetectionPipeline,
+        config: CollectorConfig | None = None,
+    ) -> None:
+        self._pipeline = pipeline
+        self._config = config or CollectorConfig()
+        self._collectors = self._build_collectors()
+
+    def _build_collectors(self) -> list:
+        from aegis.detection.collectors.aws import AwsCollector
+        from aegis.detection.collectors.azure import AzureCollector
+        from aegis.detection.collectors.oracle import OracleCollector
+
+        collectors = []
+        if self._config.aws_enabled:
+            collectors.append(AwsCollector(self._config))
+        if self._config.azure_enabled:
+            collectors.append(AzureCollector(self._config))
+        if self._config.oracle_enabled:
+            collectors.append(OracleCollector(self._config))
+        return collectors
+
+    async def collect_and_process(self) -> list[ThreatAssessment]:
+        """Run all collectors, then process each event through the pipeline."""
+        # L0: collect from all clouds in parallel
+        tasks = [c.collect() for c in self._collectors]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_events: list[CloudEvent] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("Collector failed: %s", result)
+            else:
+                all_events.extend(result)
+
+        logger.info("Collected %d events from %d collectors", len(all_events), len(self._collectors))
+
+        # L1-L5: process each event
+        assessments: list[ThreatAssessment] = []
+        for event in all_events:
+            assessment = await self._pipeline.process(event.to_pipeline_dict())
+            assessments.append(assessment)
+        return assessments
+
+    async def healthcheck(self) -> dict[str, bool]:
+        """Check connectivity for all configured collectors."""
+        results: dict[str, bool] = {}
+        for collector in self._collectors:
+            results[collector.provider] = await collector.healthcheck()
+        return results

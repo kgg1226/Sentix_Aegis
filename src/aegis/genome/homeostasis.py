@@ -16,10 +16,12 @@ from aegis.genome.codec import with_valid_checksum
 
 # Target profiles per threat level
 _TARGET_PROFILES: dict[str, dict[str, float]] = {
-    "peacetime": {"RTG": 0.30, "ISO": 0.25, "ATH": 0.30, "DTX": 0.40, "DCP": 0.10, "RSP": 0.25},
-    "escalation": {"RTG": 0.50, "ISO": 0.50, "ATH": 0.55, "DTX": 0.65, "DCP": 0.30, "RSP": 0.50},
-    "wartime": {"RTG": 0.55, "ISO": 0.90, "ATH": 0.90, "DTX": 0.75, "DCP": 0.10, "RSP": 0.80},
-    "zeroday": {"RTG": 0.40, "ISO": 0.35, "ATH": 0.40, "DTX": 0.80, "DCP": 0.85, "RSP": 0.30},
+    # Battle-tuned: 2x 1000-battle campaigns. Adaptive Red (erode/blitz/cascade)
+    # required all segments >= 0.70 floor. RTG was chronic weakness at 0.67.
+    "peacetime": {"RTG": 0.70, "ISO": 0.70, "ATH": 0.70, "DTX": 0.70, "DCP": 0.70, "RSP": 0.70},
+    "escalation": {"RTG": 0.70, "ISO": 0.70, "ATH": 0.70, "DTX": 0.70, "DCP": 0.70, "RSP": 0.70},
+    "wartime": {"RTG": 0.70, "ISO": 0.90, "ATH": 0.90, "DTX": 0.75, "DCP": 0.70, "RSP": 0.80},
+    "zeroday": {"RTG": 0.70, "ISO": 0.70, "ATH": 0.70, "DTX": 0.80, "DCP": 0.85, "RSP": 0.70},
 }
 
 _SEG_NAMES = ("RTG", "ISO", "ATH", "DTX", "DCP", "RSP")

@@ -1,0 +1,113 @@
+{
+  "genome_config": {
+    "w_coverage": 0.3492,
+    "w_efficiency": 0.3492,
+    "w_adaptability": 0.0121,
+    "w_synergy": 0.2773,
+    "w_threat_match": 0.0121
+  },
+  "detection_config": {
+    "l3_trigger_threshold": 0.05,
+    "l2_zscore_threshold": 1.56,
+    "l5_semantic_threshold": 0.7
+  },
+  "density_floors": {
+    "RTG": 0.7,
+    "ISO": 0.7,
+    "ATH": 0.7,
+    "DTX": 0.7,
+    "DCP": 0.7,
+    "RSP": 0.3
+  },
+  "homeostasis_overrides": {
+    "peacetime": {
+      "RTG": 0.7,
+      "ISO": 0.7,
+      "ATH": 0.7,
+      "DTX": 0.7,
+      "DCP": 0.7,
+      "RSP": 0.7
+    },
+    "escalation": {
+      "RTG": 0.7,
+      "ISO": 0.7,
+      "ATH": 0.7,
+      "DTX": 0.7,
+      "DCP": 0.7,
+      "RSP": 0.7
+    },
+    "wartime": {
+      "RTG": 0.7,
+      "ISO": 0.9,
+      "ATH": 0.9,
+      "DTX": 0.75,
+      "DCP": 0.7,
+      "RSP": 0.8
+    },
+    "zeroday": {
+      "RTG": 0.7,
+      "ISO": 0.7,
+      "ATH": 0.7,
+      "DTX": 0.8,
+      "DCP": 0.85,
+      "RSP": 0.7
+    }
+  },
+  "chronic_weaknesses": [
+    "RTG",
+    "ISO",
+    "ATH",
+    "DTX",
+    "DCP"
+  ],
+  "adjustments": [
+    {
+      "target": "density_floor.RTG",
+      "old": 0.3,
+      "new": 0.7,
+      "reason": "RTG breached 683x (avg density 0.73 at breach). Raising floor to 0.70."
+    },
+    {
+      "target": "density_floor.ISO",
+      "old": 0.3,
+      "new": 0.7,
+      "reason": "ISO breached 94x (avg density 0.75 at breach). Raising floor to 0.70."
+    },
+    {
+      "target": "density_floor.ATH",
+      "old": 0.3,
+      "new": 0.7,
+      "reason": "ATH breached 17x (avg density 0.75 at breach). Raising floor to 0.70."
+    },
+    {
+      "target": "density_floor.DTX",
+      "old": 0.3,
+      "new": 0.7,
+      "reason": "DTX breached 5x (avg density 0.76 at breach). Raising floor to 0.70."
+    },
+    {
+      "target": "density_floor.DCP",
+      "old": 0.3,
+      "new": 0.7,
+      "reason": "DCP breached 20x (avg density 0.75 at breach). Raising floor to 0.70."
+    },
+    {
+      "target": "fitness.w_efficiency",
+      "old": 0.3523,
+      "new": 0.4,
+      "reason": "Chronic breach in segments mapped to 'efficiency'. Boosting weight from 0.35 to 0.40."
+    },
+    {
+      "target": "fitness.w_synergy",
+      "old": 0.2676,
+      "new": 0.3176,
+      "reason": "Chronic breach in segments mapped to 'synergy'. Boosting weight from 0.27 to 0.32."
+    },
+    {
+      "target": "fitness.w_coverage",
+      "old": 0.3523,
+      "new": 0.4,
+      "reason": "Chronic breach in segments mapped to 'coverage'. Boosting weight from 0.35 to 0.40."
+    }
+  ]
+}

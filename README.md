@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # AEGIS — Adaptive Evolving Guard & Immune System
 
 > Autonomous multi-cloud security defense that evolves faster than attackers can adapt.
@@ -60,9 +59,9 @@ sentix-aegis/
 │       │   ├── pipeline.py  # Orchestrator
 │       │   ├── collectors/  # L0: multi-cloud signal collection
 │       │   │   ├── __init__.py
-│       │   │   ├── aws.py
-│       │   │   ├── azure.py
-│       │   │   └── oracle.py
+│       │   │   ├── aws.py       # CloudTrail, GuardDuty, SecurityHub
+│       │   │   ├── azure.py    # Sentinel, Defender for Cloud
+│       │   │   └── oracle.py   # Cloud Guard
 │       │   └── analyzers/   # L1-L4 analysis layers
 │       │       ├── __init__.py
 │       │       ├── pattern.py      # L1: signature matching
@@ -94,7 +93,10 @@ sentix-aegis/
 ├── tests/
 │   ├── unit/
 │   └── integration/
-├── infra/                   # AWS CDK infrastructure
+├── infra/                   # AWS CDK infrastructure (stub — Phase 7)
+│   ├── __init__.py
+│   ├── app.py              # CDK app entry point
+│   └── cdk.json            # CDK configuration
 ├── docs/                    # Design documents
 └── tasks/
     ├── todo.md
@@ -140,16 +142,36 @@ pytest
 python -m aegis.detection.pipeline --mode local
 ```
 
+## Cloud collector setup (optional)
+
+Collectors gracefully degrade when their SDK is not installed — AEGIS runs in local mode without any cloud dependency.
+
+```bash
+# AWS (CloudTrail, GuardDuty, SecurityHub) — included in base dependencies
+pip install boto3
+
+# Azure (Sentinel, Defender for Cloud)
+pip install azure-identity azure-mgmt-securityinsight
+
+# Oracle Cloud (Cloud Guard)
+pip install oci
+```
+
+Enable/disable collectors via `CollectorConfig` or environment:
+
+| Collector | Default | Config key |
+|---|---|---|
+| AWS | enabled | `aws_enabled` |
+| Azure | disabled | `azure_enabled` + `azure_subscription_id` |
+| Oracle | disabled | `oracle_enabled` + `oracle_compartment_id` |
+
 ## Known limitations (v0.1)
 
 - Fitness function constants are hand-tuned, not empirically calibrated (see AEGIS-F007).
 - Detection pipeline L3/L4 require AWS Bedrock access — local mode uses mock LLM responses.
 - Sandbox arena is single-threaded; Red/Blue agents run sequentially, not in parallel.
-- Only AWS collector is implemented; Azure and Oracle are stubs.
+- AWS CDK infrastructure is stubbed (Phase 7) — deploy stacks are not yet defined.
 
 ## License
 
 Apache License 2.0 — see [LICENSE](./LICENSE).
-=======
-# Sentix_Aegis
->>>>>>> 717505477a9fb3143fcf12e64476c675833b8897

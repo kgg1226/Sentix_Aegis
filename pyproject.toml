@@ -25,12 +25,15 @@ dependencies = [
     "structlog>=24.0",
     "pydantic>=2.0",
     "numpy>=1.26",
-    "boto3>=1.34",
     "asyncpg>=0.29",
     "pgvector>=0.3",
 ]
 
 [project.optional-dependencies]
+aws = ["boto3>=1.34"]
+azure = ["azure-identity>=1.16", "azure-mgmt-securityinsight>=2.0"]
+oracle = ["oci>=2.120"]
+all-clouds = ["sentix-aegis[aws,azure,oracle]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

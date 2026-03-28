@@ -1,0 +1,7 @@
+{
+  "app": "python infra/app.py",
+  "context": {
+    "region": "ap-northeast-2",
+    "@aws-cdk/core:newStyleStackSynthesis": true
+  }
+}
