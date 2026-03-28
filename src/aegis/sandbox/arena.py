@@ -82,18 +82,27 @@ class Arena:
 
         # Blue successful defense partially decays Red's erosion
         # Models real-world: key rotation, topology change, honeypot redeployment
-        # Decay is less than erosion gain (0.05/fail) -- attacker has initiative
+        # Decay is less than erosion gain (0.06/fail) -- attacker has initiative
+        # But Blue also gets a small "learning" decay on ALL segments (global vigilance)
         if not red_won:
             seg = attack.target_segment
-            decay = 0.03  # Modest: defense is harder than attack
+            decay = 0.05  # Active defense: patching, rotating, honeypot redeployment
             self._red._erosion_pressure[seg] = max(
                 0.0, self._red._erosion_pressure.get(seg, 0.0) - decay
             )
+            # Global vigilance: Blue's successful defense improves overall posture
+            for other_seg in ["RTG", "ISO", "ATH", "DTX", "DCP", "RSP"]:
+                if other_seg != seg:
+                    self._red._erosion_pressure[other_seg] = max(
+                        0.0, self._red._erosion_pressure.get(other_seg, 0.0) - 0.01
+                    )
 
-        # Blue responds (pass attack details for learning)
+        # Blue responds (pass attack details + Red intel for learning)
         evolved = self._blue.respond(
             genome, ctx, red_won,
             attacked_segment=attack.target_segment,
+            red_strategy=attack.strategy,
+            attack_category=attack.category.name,
         )
 
         from aegis.genome.fitness import evaluate
