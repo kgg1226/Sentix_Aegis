@@ -66,43 +66,37 @@
       "target": "density_floor.RTG",
       "old": 0.3,
       "new": 0.7,
-      "reason": "RTG breached 1640x (avg density 0.80 at breach). Raising floor to 0.70."
+      "reason": "RTG breached 253x (avg density 0.83 at breach). Raising floor to 0.70."
     },
     {
       "target": "density_floor.ISO",
       "old": 0.3,
       "new": 0.7,
-      "reason": "ISO breached 54x (avg density 0.84 at breach). Raising floor to 0.70."
+      "reason": "ISO breached 309x (avg density 0.84 at breach). Raising floor to 0.70."
     },
     {
       "target": "density_floor.ATH",
       "old": 0.3,
       "new": 0.7,
-      "reason": "ATH breached 42x (avg density 0.86 at breach). Raising floor to 0.70."
+      "reason": "ATH breached 900x (avg density 0.85 at breach). Raising floor to 0.70."
     },
     {
       "target": "density_floor.DTX",
       "old": 0.3,
       "new": 0.7,
-      "reason": "DTX breached 16x (avg density 0.81 at breach). Raising floor to 0.70."
+      "reason": "DTX breached 346x (avg density 0.81 at breach). Raising floor to 0.70."
     },
     {
       "target": "density_floor.DCP",
       "old": 0.3,
       "new": 0.7,
-      "reason": "DCP breached 21x (avg density 0.81 at breach). Raising floor to 0.70."
+      "reason": "DCP breached 37x (avg density 0.85 at breach). Raising floor to 0.70."
     },
     {
       "target": "density_floor.RSP",
       "old": 0.3,
       "new": 0.7,
-      "reason": "RSP breached 20x (avg density 0.82 at breach). Raising floor to 0.70."
-    },
-    {
-      "target": "fitness.w_efficiency",
-      "old": 0.2857,
-      "new": 0.3357,
-      "reason": "Chronic breach in segments mapped to 'efficiency'. Boosting weight from 0.29 to 0.34."
+      "reason": "RSP breached 30x (avg density 0.82 at breach). Raising floor to 0.70."
     },
     {
       "target": "fitness.w_coverage",
@@ -115,6 +109,12 @@
       "old": 0.2743,
       "new": 0.3243,
       "reason": "Chronic breach in segments mapped to 'synergy'. Boosting weight from 0.27 to 0.32."
+    },
+    {
+      "target": "fitness.w_efficiency",
+      "old": 0.2857,
+      "new": 0.3357,
+      "reason": "Chronic breach in segments mapped to 'efficiency'. Boosting weight from 0.29 to 0.34."
     }
   ]
 }

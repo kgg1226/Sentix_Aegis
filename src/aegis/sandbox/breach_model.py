@@ -91,12 +91,22 @@ def evaluate_breach(
     multi_targets: tuple[str, ...] = (),
     rng: random.Random | None = None,
     erosion_pressure: float = 0.0,
+    immune_bonus: float = 0.0,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
-    """Determine if an attack breaches the defense."""
+    """Determine if an attack breaches the defense.
+
+    immune_bonus: defense bonus from Blue's immune memory (0.0-0.25)
+    stealth_rating: how stealthy the attack is (0.0-1.0), reduces DTX effectiveness
+    """
     rng = rng or random.Random()
     targets = multi_targets if multi_targets else (target_segment,)
     synergy = compute_synergy_bonus(genome)
+    # Immune bonus adds directly to synergy (antibody-enhanced defense)
+    synergy += immune_bonus
     eff_intensity = _effective_intensity(intensity)
+    # Stealth reduces detection effectiveness (DTX less effective)
+    # This is applied inside individual breach models via the parameter
 
     dispatch = {
         ThreatCategory.COMMODITY: _breach_commodity,
@@ -117,7 +127,8 @@ def evaluate_breach(
             synergy_bonus=synergy,
             rng=rng,
             erosion_pressure=erosion_pressure,
-        )
+            stealth_rating=stealth_rating,
+        )  # type: ignore[call-arg]
         if result.breached:
             return result
 
@@ -145,6 +156,7 @@ def _breach_commodity(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """COMMODITY: density check. High density = near-impenetrable.
 
@@ -179,6 +191,7 @@ def _breach_volume(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """VOLUME: fatigue model. Erosion is the real weapon here.
 
@@ -222,6 +235,7 @@ def _breach_apt(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """APT: penetration model. Erosion + probabilistic breakthrough.
 
@@ -231,8 +245,10 @@ def _breach_apt(
     a well-planned APT with enough accumulated intelligence.
     """
     density = genome.density(segment)
-    dcp_counter = genome.density("DCP") * 0.12
-    dtx_counter = genome.density("DTX") * 0.08
+    # Stealth reduces detection effectiveness in APT model
+    stealth_bypass = stealth_rating * 0.3
+    dcp_counter = genome.density("DCP") * 0.12 * (1.0 - stealth_bypass)
+    dtx_counter = genome.density("DTX") * 0.08 * (1.0 - stealth_bypass)
 
     defense = density + synergy_bonus * 0.4 + dcp_counter + dtx_counter
     # APT accumulates penetration progress
@@ -276,6 +292,7 @@ def _breach_zeroday(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """ZERO_DAY: probabilistic. The WILDCARD.
 
@@ -292,7 +309,8 @@ def _breach_zeroday(
     # Base breach probability scales with intensity
     base_prob = 0.08 + intensity * 0.06
     # DTX reduces probability (behavioral detection catches anomalies)
-    dtx_reduction = dtx * 0.12
+    # Stealth reduces DTX effectiveness (stealthy attacks are harder to detect)
+    dtx_reduction = dtx * 0.12 * (1.0 - stealth_rating * 0.4)
     # Synergy reduces further
     synergy_reduction = synergy_bonus * 0.25
     # High density provides some resistance
@@ -324,6 +342,7 @@ def _breach_insider(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """INSIDER: auth bypass. The TRAITOR.
 
@@ -377,6 +396,7 @@ def _breach_meta(
     synergy_bonus: float,
     rng: random.Random,
     erosion_pressure: float,
+    stealth_rating: float = 0.0,
 ) -> BreachResult:
     """META_ATTACK: targets detection pipeline. The SABOTEUR.
 
