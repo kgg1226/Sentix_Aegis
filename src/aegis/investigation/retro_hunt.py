@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -197,8 +198,7 @@ class RetroHuntEngine:
         Returns:
             RetroHuntResult with matched events
         """
-        import time
-        start = time.monotonic()
+        start = _time.monotonic()
 
         events = self._store.query(lookback_hours=lookback_hours, filters=filters)
         result = RetroHuntResult(rule=rule, total_events_scanned=len(events))
@@ -211,7 +211,7 @@ class RetroHuntEngine:
                     event_timestamp=event.get("timestamp", ""),
                 ))
 
-        result.scan_duration_ms = (time.monotonic() - start) * 1000
+        result.scan_duration_ms = (_time.monotonic() - start) * 1000
         self._hunt_history.append(result)
         return result
 

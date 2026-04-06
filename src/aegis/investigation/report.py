@@ -18,9 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from aegis.investigation.ttp_mapper import TTPMapping, MitreTactic
+from aegis.investigation.ttp_mapper import TTPMapping, TTPMatch, MitreTactic
 from aegis.investigation.retro_hunt import DetectionRule, RetroHuntResult
-from aegis.investigation.rule_generator import GapAnalysis
+from aegis.investigation.rule_generator import GapAnalysis, CorrelationRule, PREDEFINED_CORRELATION_RULES
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +46,16 @@ class InvestigationReport:
     # 메타데이터
     severity: str = "MEDIUM"   # LOW / MEDIUM / HIGH / CRITICAL
     status: str = "OPEN"       # OPEN / IN_PROGRESS / CLOSED
+    correlation_matches: list[CorrelationRule] = field(default_factory=list)
 
     def render_markdown(self) -> str:
-        """보고서를 마크다운 형식으로 렌더링."""
+        """보고서를 마크다운 형식으로 렌더링 (10-section)."""
         sections = [
             self._render_header(),
             self._render_executive_summary(),
+            self._render_actor_profiles(),
             self._render_timeline(),
+            self._render_evidence_chain(),
             self._render_ttp_table(),
             self._render_rule_analysis(),
             self._render_retro_findings(),
@@ -110,10 +113,148 @@ class InvestigationReport:
                 f"탐지 룰이 누락됨 (커버리지: {self.gap_analysis.coverage_rate:.0%})"
             )
 
+        if self.correlation_matches:
+            lines.append("")
+            lines.append(
+                f"- **상관 분석**: {len(self.correlation_matches)}개의 "
+                f"다단계 공격 패턴이 감지됨"
+            )
+            for cr in self.correlation_matches:
+                lines.append(f"  - `{cr.rule_id}` {cr.name} (severity: {cr.severity:.2f})")
+
+        return "\n".join(lines)
+
+    def _render_actor_profiles(self) -> str:
+        lines = ["## 2. Actor Profiles", ""]
+
+        if not self.events:
+            lines.append("행위자 정보가 없습니다.")
+            return "\n".join(lines)
+
+        from aegis.investigation.bridge import build_actor_profiles
+        profiles = build_actor_profiles(self.events)
+        if not profiles:
+            lines.append("행위자 정보가 없습니다.")
+            return "\n".join(lines)
+
+        # risk score 내림차순 정렬
+        sorted_profiles = sorted(profiles.values(), key=lambda p: p.risk_score, reverse=True)
+
+        lines.append("| Identity | Risk | Events | IPs | Regions | Max Severity | Activity Window |")
+        lines.append("|----------|------|--------|-----|---------|-------------|-----------------|")
+
+        for p in sorted_profiles[:20]:
+            identity = p.identity
+            if len(identity) > 50:
+                identity = identity[:47] + "..."
+            risk_label = "🔴" if p.risk_score >= 0.7 else "🟡" if p.risk_score >= 0.4 else "🟢"
+
+            window = ""
+            if p.first_seen and p.last_seen:
+                window = f"{p.first_seen[:16]}~{p.last_seen[11:16]}"
+
+            lines.append(
+                f"| {identity} | {risk_label} {p.risk_score:.2f} | "
+                f"{p.event_count} | {p.unique_ips} | "
+                f"{len(p.regions)} | {p.max_severity:.2f} | {window} |"
+            )
+
+        # 고위험 행위자 경고
+        high_risk = [p for p in sorted_profiles if p.risk_score >= 0.7]
+        if high_risk:
+            lines.append("")
+            lines.append(f"> **{len(high_risk)}명의 고위험 행위자**가 식별되었습니다.")
+            for p in high_risk:
+                reasons = []
+                if p.unique_ips > 3:
+                    reasons.append(f"{p.unique_ips}개 IP 사용")
+                if p.is_multi_region:
+                    reasons.append(f"{len(p.regions)}개 리전 접근")
+                if p.max_severity >= 0.8:
+                    reasons.append(f"고위험 행동 (severity {p.max_severity:.2f})")
+                lines.append(f"> - `{p.identity[:50]}`: {', '.join(reasons)}")
+
+        return "\n".join(lines)
+
+    def _render_evidence_chain(self) -> str:
+        lines = ["## 4. Evidence Chain (Attack Flow)", ""]
+
+        if not self.ttp_mapping or not self.ttp_mapping.matches:
+            lines.append("증거 체인을 구성할 수 없습니다.")
+            return "\n".join(lines)
+
+        by_tactic = self.ttp_mapping.techniques_by_tactic()
+
+        # 전술 순서대로 공격 흐름 시각화
+        tactic_order = [
+            MitreTactic.RECONNAISSANCE,
+            MitreTactic.INITIAL_ACCESS,
+            MitreTactic.EXECUTION,
+            MitreTactic.PERSISTENCE,
+            MitreTactic.PRIVILEGE_ESCALATION,
+            MitreTactic.DEFENSE_EVASION,
+            MitreTactic.CREDENTIAL_ACCESS,
+            MitreTactic.DISCOVERY,
+            MitreTactic.LATERAL_MOVEMENT,
+            MitreTactic.COLLECTION,
+            MitreTactic.COMMAND_AND_CONTROL,
+            MitreTactic.EXFILTRATION,
+            MitreTactic.IMPACT,
+        ]
+
+        active_tactics = [t for t in tactic_order if t in by_tactic]
+
+        if len(active_tactics) < 2:
+            lines.append("단일 전술만 감지되어 공격 체인이 구성되지 않습니다.")
+            if active_tactics:
+                t = active_tactics[0]
+                matches = by_tactic[t]
+                tech_names = list({m.technique.name for m in matches})
+                lines.append(f"- {t.name}: {', '.join(tech_names)}")
+            return "\n".join(lines)
+
+        # 공격 흐름 다이어그램 (텍스트)
+        lines.append("```")
+        flow_parts = []
+        for t in active_tactics:
+            matches = by_tactic[t]
+            tech_names = list({m.technique.name for m in matches})
+            short_name = t.name.replace("_", " ").title()
+            techs_str = ", ".join(tech_names[:2])
+            if len(tech_names) > 2:
+                techs_str += f" +{len(tech_names)-2}"
+            flow_parts.append(f"[{short_name}]\n  {techs_str}")
+
+        lines.append("\n    |\n    v\n".join(flow_parts))
+        lines.append("```")
+
+        # 상관 분석 룰 매칭
+        if self.ttp_mapping:
+            technique_map: dict[str, str] = {}
+            for m in self.ttp_mapping.matches:
+                technique_map[m.event_id] = m.technique.technique_id
+
+            matched_correlations: list[CorrelationRule] = []
+            for cr in PREDEFINED_CORRELATION_RULES:
+                if cr.matches_sequence(self.events, technique_map):
+                    matched_correlations.append(cr)
+
+            self.correlation_matches = matched_correlations
+
+            if matched_correlations:
+                lines.append("")
+                lines.append("### Correlation Rule Matches")
+                lines.append("")
+                for cr in matched_correlations:
+                    seq = " → ".join(cr.technique_sequence)
+                    lines.append(f"- **{cr.name}** (`{cr.rule_id}`, severity: {cr.severity:.2f})")
+                    lines.append(f"  - 패턴: `{seq}` (within {cr.time_window_hours}h)")
+                    lines.append(f"  - 설명: {cr.description}")
+
         return "\n".join(lines)
 
     def _render_timeline(self) -> str:
-        lines = ["## 2. Attack Timeline", ""]
+        lines = ["## 3. Attack Timeline", ""]
 
         if not self.events:
             lines.append("이벤트가 없습니다.")
@@ -149,7 +290,7 @@ class InvestigationReport:
         return "\n".join(lines)
 
     def _render_ttp_table(self) -> str:
-        lines = ["## 3. MITRE ATT&CK TTP Mapping", ""]
+        lines = ["## 5. MITRE ATT&CK TTP Mapping", ""]
 
         if not self.ttp_mapping or not self.ttp_mapping.matches:
             lines.append("TTP 매칭이 없습니다.")
@@ -165,7 +306,7 @@ class InvestigationReport:
             if not matches:
                 continue
             # 기법별 중복 제거 (최고 confidence만)
-            best_by_tech: dict[str, type] = {}
+            best_by_tech: dict[str, TTPMatch] = {}
             for m in matches:
                 tid = m.technique.technique_id
                 if tid not in best_by_tech or m.confidence > best_by_tech[tid].confidence:
@@ -181,10 +322,10 @@ class InvestigationReport:
         return "\n".join(lines)
 
     def _render_rule_analysis(self) -> str:
-        lines = ["## 4. Detection Rule Analysis", ""]
+        lines = ["## 6. Detection Rule Analysis", ""]
 
         if self.gap_analysis:
-            lines.append(f"### 4.1 Coverage Summary")
+            lines.append(f"### 6.1 Coverage Summary")
             lines.append("")
             lines.append(f"- 식별된 기법 수: {self.gap_analysis.total_techniques_seen}")
             lines.append(f"- 기존 룰 커버: {self.gap_analysis.covered}")
@@ -193,7 +334,7 @@ class InvestigationReport:
 
         if self.generated_rules:
             lines.append("")
-            lines.append("### 4.2 Auto-Generated Rules")
+            lines.append("### 6.2 Auto-Generated Rules")
             lines.append("")
             lines.append("| Rule ID | Name | MITRE ID | Severity | Conditions |")
             lines.append("|---------|------|----------|----------|------------|")
@@ -215,7 +356,7 @@ class InvestigationReport:
         return "\n".join(lines)
 
     def _render_retro_findings(self) -> str:
-        lines = ["## 5. Retro Hunt Findings", ""]
+        lines = ["## 7. Retro Hunt Findings", ""]
 
         if not self.retro_results:
             lines.append("레트로 헌트가 실행되지 않았습니다.")
@@ -259,7 +400,7 @@ class InvestigationReport:
         return "\n".join(lines)
 
     def _render_impact(self) -> str:
-        lines = ["## 6. Impact Assessment", ""]
+        lines = ["## 8. Impact Assessment", ""]
 
         if not self.ttp_mapping or not self.ttp_mapping.matches:
             lines.append("영향 범위를 평가할 수 없습니다.")
@@ -297,7 +438,7 @@ class InvestigationReport:
         return "\n".join(lines)
 
     def _render_recommendations(self) -> str:
-        lines = ["## 7. Recommendations", ""]
+        lines = ["## 9. Recommendations", ""]
 
         rec_num = 1
 

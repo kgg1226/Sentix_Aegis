@@ -195,36 +195,191 @@ class RuleGenerator:
     def _build_conditions(
         self, tech: MitreTechnique,
     ) -> list[tuple[str, str, str]]:
-        """기법의 특성에서 탐지 조건을 생성."""
+        """기법의 특성에서 탐지 조건을 생성.
+
+        전략:
+        1. action 매칭 (cloud_actions 기반)
+        2. keyword 보조 조건 (detection_keywords 기반)
+        3. severity 임계값 (고위험 기법만)
+        4. detection 시그널 연동 (bridge 경유 이벤트용)
+        """
         conditions: list[tuple[str, str, str]] = []
 
-        # cloud_actions가 있으면 action 기반 조건
+        # 1차: cloud_actions 기반 조건
         if tech.cloud_actions:
             actions_str = ",".join(tech.cloud_actions)
             conditions.append(("action", "in", actions_str))
-        else:
-            # keyword 기반 fallback
-            if tech.detection_keywords:
-                # 가장 구체적인 키워드를 조건으로
-                best_keyword = max(tech.detection_keywords, key=len)
-                conditions.append(("action", "contains", best_keyword))
+        elif tech.detection_keywords:
+            best_keyword = max(tech.detection_keywords, key=len)
+            conditions.append(("action", "contains", best_keyword))
 
-        # severity 기반 추가 조건
-        if tech.severity_weight >= 0.8:
+        # 2차: keyword 보조 조건 (action과 별개로 detail 필드도 체크)
+        if tech.detection_keywords and tech.cloud_actions:
+            # action 조건이 있으면 keyword는 보조로 detail에서 검색
+            top_keywords = sorted(tech.detection_keywords, key=len, reverse=True)[:2]
+            for kw in top_keywords:
+                conditions.append(("detail", "contains", kw))
+                break  # 가장 구체적인 것 1개만
+
+        # 3차: severity 기반 조건 (고위험 기법에만)
+        if tech.severity_weight >= 0.9:
+            conditions.append(("severity", "gt", "0.5"))
+        elif tech.severity_weight >= 0.7:
             conditions.append(("severity", "gt", "0.3"))
 
         return conditions
+
+    def validate_rules(
+        self,
+        rules: list[DetectionRule],
+        baseline_events: list[dict],
+        max_fp_rate: float = 0.05,
+    ) -> tuple[list[DetectionRule], list[DetectionRule]]:
+        """생성된 룰을 baseline 이벤트에 대해 FP rate 검증.
+
+        Args:
+            rules: 검증할 룰 목록
+            baseline_events: 정상 이벤트 (false positive 측정용)
+            max_fp_rate: 최대 허용 FP rate (기본 5%)
+
+        Returns:
+            (approved_rules, rejected_rules)
+        """
+        approved: list[DetectionRule] = []
+        rejected: list[DetectionRule] = []
+
+        if not baseline_events:
+            return rules, []
+
+        for rule in rules:
+            fp_count = sum(1 for evt in baseline_events if rule.matches(evt))
+            fp_rate = fp_count / len(baseline_events)
+            if fp_rate <= max_fp_rate:
+                approved.append(rule)
+            else:
+                rejected.append(rule)
+
+        return approved, rejected
 
     def generate_and_validate(
         self,
         mapping: TTPMapping,
         max_rules: int = 20,
+        baseline_events: list[dict] | None = None,
     ) -> tuple[GapAnalysis, list[DetectionRule]]:
-        """커버리지 분석 + 룰 생성을 한 번에 수행.
+        """커버리지 분석 + 룰 생성 + FP 검증을 한 번에 수행.
+
+        Args:
+            mapping: TTP 매핑 결과
+            max_rules: 최대 생성 룰 수
+            baseline_events: FP 검증용 정상 이벤트 (없으면 검증 생략)
 
         Returns:
-            (GapAnalysis, generated_rules)
+            (GapAnalysis, approved_rules)
         """
         analysis = self.analyze_coverage(mapping)
         rules = self.generate_rules(analysis.gaps, max_rules=max_rules)
+
+        if baseline_events:
+            rules, _rejected = self.validate_rules(rules, baseline_events)
+
         return analysis, rules
+
+
+# ---------------------------------------------------------------------------
+# Correlation Rule — 다단계 공격 패턴 탐지
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class CorrelationRule:
+    """다단계 상관 분석 룰 — 여러 기법이 순차적으로 발생하는 패턴 탐지.
+
+    예: T1078(Valid Accounts) → T1580(Discovery) → T1098(Persistence)
+        → 72시간 내 동일 identity에서 발생하면 APT 캠페인 의심
+    """
+
+    rule_id: str
+    name: str
+    description: str
+    technique_sequence: tuple[str, ...]   # e.g. ("T1078", "T1580", "T1098")
+    time_window_hours: int = 72           # 시간 윈도우
+    require_same_identity: bool = True
+    severity: float = 0.9
+
+    def matches_sequence(self, events: list[dict], technique_map: dict[str, str]) -> bool:
+        """이벤트 시퀀스가 이 룰의 기법 순서를 만족하는지 검사.
+
+        Args:
+            events: 시간순 정렬된 이벤트 목록
+            technique_map: event_id → technique_id 매핑
+        """
+        if not events or not self.technique_sequence:
+            return False
+
+        # 시간 윈도우 체크
+        timestamps = [e.get("timestamp", "") for e in events if e.get("timestamp")]
+        if len(timestamps) >= 2:
+            try:
+                first = datetime.fromisoformat(timestamps[0].replace("Z", "+00:00"))
+                last = datetime.fromisoformat(timestamps[-1].replace("Z", "+00:00"))
+                if (last - first).total_seconds() > self.time_window_hours * 3600:
+                    return False
+            except (ValueError, TypeError):
+                pass
+
+        # identity 동일성 체크
+        if self.require_same_identity:
+            identities = {e.get("identity", "") for e in events if e.get("identity")}
+            if len(identities) > 1:
+                return False
+
+        # 시퀀스 매칭 (순서 보존, 모든 기법이 발견되어야 함)
+        matched_techniques: list[str] = []
+        for evt in events:
+            eid = evt.get("event_id", "")
+            tid = technique_map.get(eid, "")
+            if tid and (not matched_techniques or tid != matched_techniques[-1]):
+                matched_techniques.append(tid)
+
+        seq_idx = 0
+        for tid in matched_techniques:
+            if seq_idx < len(self.technique_sequence) and tid == self.technique_sequence[seq_idx]:
+                seq_idx += 1
+        return seq_idx >= len(self.technique_sequence)
+
+
+# 사전 정의 상관 룰
+PREDEFINED_CORRELATION_RULES: list[CorrelationRule] = [
+    CorrelationRule(
+        rule_id="CORR-001",
+        name="APT Cloud Takeover Pattern",
+        description="계정 탈취 → 탐색 → 권한 유지: 클라우드 APT 전형 패턴",
+        technique_sequence=("T1078", "T1580", "T1098"),
+        time_window_hours=72,
+        severity=0.95,
+    ),
+    CorrelationRule(
+        rule_id="CORR-002",
+        name="Defense Evasion + Exfiltration",
+        description="로깅 비활성화 후 데이터 유출: 은폐-유출 패턴",
+        technique_sequence=("T1562", "T1537"),
+        time_window_hours=24,
+        severity=1.0,
+    ),
+    CorrelationRule(
+        rule_id="CORR-003",
+        name="Credential Theft + Lateral Movement",
+        description="자격 증명 탈취 후 횡적 이동: 내부 확산 패턴",
+        technique_sequence=("T1528", "T1550"),
+        time_window_hours=48,
+        severity=0.9,
+    ),
+    CorrelationRule(
+        rule_id="CORR-004",
+        name="Persistence + Defense Evasion + Impact",
+        description="지속성 확보 → 방어 무력화 → 파괴: 랜섬웨어/와이퍼 패턴",
+        technique_sequence=("T1098", "T1562", "T1485"),
+        time_window_hours=48,
+        severity=1.0,
+    ),
+]
