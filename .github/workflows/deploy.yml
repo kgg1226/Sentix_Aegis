@@ -1,0 +1,206 @@
+name: deploy
+# ── 공급망 보안 정책 ──────────────────────────────────────────
+# 1. 모든 GitHub Action은 커밋 SHA로 고정 (태그 오염 공격 방어)
+# 2. ${{ }} 표현식은 env로 분리 (expression injection 방어)
+
+on:
+  push:
+    branches: [master]
+  repository_dispatch:
+    types: [interface-updated]
+
+jobs:
+  # ── 배포 필요 여부 판단 ──────────────────────────────────
+  check-deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_deploy: ${{ steps.check.outputs.needs_deploy }}
+      access_method: ${{ steps.profile.outputs.access_method }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check DEPLOY_FLAG from recent ticket
+        id: check
+        run: |
+          # 최신 티켓에서 DEPLOY_FLAG 확인
+          LATEST_TICKET=$(ls -t tasks/tickets/dev-*.md 2>/dev/null | head -1)
+          if [[ -n "$LATEST_TICKET" ]]; then
+            DEPLOY_FLAG=$(grep -i "DEPLOY_FLAG:" "$LATEST_TICKET" | head -1 | awk '{print $2}')
+            echo "Ticket: $LATEST_TICKET → DEPLOY_FLAG: $DEPLOY_FLAG"
+          fi
+
+          # diff 기반 자동 감지 (티켓 없거나 플래그 없을 때 폴백)
+          if [[ -z "$DEPLOY_FLAG" ]]; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+            if echo "$CHANGED" | grep -qE "^(app/api/|prisma/|Dockerfile|docker-compose|package\.json)"; then
+              DEPLOY_FLAG="true"
+              echo "Auto-detected: runtime-affecting changes found"
+            else
+              DEPLOY_FLAG="false"
+              echo "Auto-detected: no deploy-requiring changes"
+            fi
+          fi
+
+          echo "needs_deploy=$DEPLOY_FLAG" >> $GITHUB_OUTPUT
+
+      - name: Read environment profile
+        id: profile
+        run: |
+          PROFILE="env-profiles/active.toml"
+          if [[ -f "$PROFILE" ]]; then
+            METHOD=$(grep "^method" "$PROFILE" | head -1 | sed 's/.*=\s*//; s/"//g')
+            echo "access_method=$METHOD" >> $GITHUB_OUTPUT
+            echo "Profile loaded: $(grep '^name' "$PROFILE" | head -1)"
+          else
+            echo "access_method=manual" >> $GITHUB_OUTPUT
+            echo "No active profile — defaulting to manual"
+          fi
+
+  # ── 배포 실행 (필요할 때만) ──────────────────────────────
+  deploy:
+    needs: check-deploy
+    if: needs.check-deploy.outputs.needs_deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # ── CI 자동 배포 (ssm/ssh) ─────────────────────────
+      - name: Configure AWS (SSM mode)
+        if: needs.check-deploy.outputs.access_method == 'ssm'
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ap-northeast-2
+
+      - name: Execute deploy script
+        if: needs.check-deploy.outputs.access_method == 'ssm' || needs.check-deploy.outputs.access_method == 'ssh'
+        id: deploy-auto
+        run: |
+          chmod +x scripts/deploy.sh
+          bash scripts/deploy.sh 2>&1 | tee /tmp/deploy-output.txt
+          # STATUS 추출
+          if grep -q "\[STATUS\] PASSED" /tmp/deploy-output.txt; then
+            echo "deploy_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "deploy_status=failed" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 수동 배포 (manual mode) ────────────────────────
+      - name: Generate deploy script (manual mode)
+        if: needs.check-deploy.outputs.access_method == 'manual'
+        id: deploy-manual
+        run: |
+          chmod +x scripts/deploy.sh
+          bash scripts/deploy.sh --generate-only
+          echo "deploy_status=manual_pending" >> $GITHUB_OUTPUT
+          echo "::warning::Manual deployment required — check tasks/deploy-output.md"
+
+      - name: Commit deploy output
+        if: always()
+        run: |
+          if [[ -f tasks/deploy-output.md ]]; then
+            git config user.name  "devops-agent"
+            git config user.email "devops@noreply"
+            git add tasks/deploy-output.md
+            git diff --staged --quiet || git commit -m "chore: deploy output $(date +%Y-%m-%d)"
+            git push origin master || true
+          fi
+
+      # ── security 에이전트 트리거 ───────────────────────
+      - name: Dispatch security scan (auto deploy succeeded)
+        if: steps.deploy-auto.outputs.deploy_status == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/dispatches" \
+            -d "$(jq -n --arg sha "$SHA" '{
+              event_type: "security-scan",
+              client_payload: { sha: $sha }
+            }')"
+
+      # ── 실패 시 dev-fix 트리거 ─────────────────────────
+      - name: Trigger dev-fix on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/dispatches" \
+            -d "$(jq -n --arg sha "$SHA" --arg run_id "$RUN_ID" '{
+              event_type: "devops-failed",
+              client_payload: {
+                sha: $sha,
+                run_id: $run_id,
+                issue: "Deploy failed — check deploy output"
+              }
+            }')"
+
+  # ── 배포 건너뜀 → security 직행 ─────────────────────────
+  skip-deploy:
+    needs: check-deploy
+    if: needs.check-deploy.outputs.needs_deploy == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip deploy — trigger security directly
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "Deploy skipped (DEPLOY_FLAG: false)"
+          curl -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${REPO}/dispatches" \
+            -d "$(jq -n --arg sha "$SHA" '{
+              event_type: "security-scan",
+              client_payload: { sha: $sha, deploy_skipped: true }
+            }')"
+
+  # ── 멀티 프로젝트 cascade ──────────────────────────────
+  cascade:
+    needs: [check-deploy]
+    if: contains(github.event.commits.*.modified, 'INTERFACE.md') || github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Cascade to dependent projects
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          SOURCE_REPO: ${{ github.event.repository.name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [[ ! -f registry.md ]]; then
+            echo "No registry.md — skipping cascade"
+            exit 0
+          fi
+          DEPENDENTS=$(grep '^\|' registry.md | grep -v 'header\|---\|프로젝트' | awk -F'|' '{print $3}' | tr -d ' ')
+          for repo in $DEPENDENTS; do
+            PROJECT=$(basename "$repo")
+            echo "Dispatching to $PROJECT..."
+            curl -s -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/kgg1226/${PROJECT}/dispatches" \
+              -d "$(jq -n --arg source "$SOURCE_REPO" --arg sha "$SHA" '{
+                event_type: "interface-updated",
+                client_payload: { source: $source, sha: $sha }
+              }')"
+          done

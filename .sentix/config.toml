@@ -1,0 +1,25 @@
+[framework]
+version = "2.0.0"
+
+[layers.core]
+enabled = true
+
+[layers.learning]
+enabled = true
+
+[layers.pattern_engine]
+enabled = true
+
+[layers.visual]
+enabled = false
+
+[layers.evolution]
+enabled = false
+
+[provider]
+default = "claude"
+
+[version]
+auto_bump = true
+auto_tag = true
+auto_changelog = true
