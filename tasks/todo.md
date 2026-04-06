@@ -57,6 +57,14 @@
 - [x] Collector tests (19 tests)
 - [x] Graceful SDK degradation
 
+## Phase 8: Investigation Pipeline — COMPLETE
+- [x] TTP Mapper (MITRE ATT&CK 20+ 기법, action/keyword 매칭)
+- [x] Retro Hunt Engine (EventStore + DetectionRule + 과거 이벤트 재검사)
+- [x] Rule Generator (커버리지 갭 분석 + 자동 룰 생성)
+- [x] Investigation Report Generator (7-section 마크다운 보고서)
+- [x] Investigation Pipeline Orchestrator (반복 분석 피드백 루프)
+- [x] 28 unit tests passing (총 102 tests)
+
 ## Phase 7: Infrastructure + Bedrock (future)
 - [ ] AWS CDK infrastructure
 - [ ] EventBridge event bus
