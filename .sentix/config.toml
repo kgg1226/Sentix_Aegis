@@ -19,6 +19,12 @@ enabled = false
 [provider]
 default = "claude"
 
+
+# ── Safety ───────────────────────────────────────────────
+[safety]
+safety_enabled = true           # safety.toml 삭제 감지용 (수동 삭제 금지)
+recovery_key_hash = "5e665c4cada77394693756f9e5464ad15de6e63f247ce34a350ae95e11ec711c"
+
 [version]
 auto_bump = true
 auto_tag = true
